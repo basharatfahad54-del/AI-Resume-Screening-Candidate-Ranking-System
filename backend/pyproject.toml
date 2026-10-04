@@ -3,7 +3,8 @@ name = "ai-resume-screening-backend"
 version = "0.2.0"
 description = "AI-powered resume screening and candidate ranking API"
 requires-python = ">=3.10"
-readme = "../README.md"
+# No `readme` key on purpose: the only README lives at the repository root and
+# setuptools refuses to read metadata files from outside the project directory.
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -15,9 +16,13 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Makes `app` importable no matter how pytest is invoked. The `pytest` console
+# script does not add the working directory to sys.path the way
+# `python -m pytest` does, so without this the suite only passes locally.
+pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
-addopts = "-q --strict-markers"
+addopts = "--strict-markers"
 filterwarnings = [
     "ignore::DeprecationWarning:passlib.*",
 ]

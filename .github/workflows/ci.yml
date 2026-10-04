@@ -42,6 +42,9 @@ jobs:
           python -m pip install --upgrade pip
           # The lockfile lives at the repository root; this job runs in backend/.
           pip install -r ../requirements.txt
+          # Editable install of the API package itself, so `import app` resolves
+          # from any directory and the packaging is verified rather than assumed.
+          pip install -e .
 
       # The deterministic hashing embedder keeps this offline and reproducible:
       # no model download, no network, same vectors on every runner.
@@ -190,13 +193,15 @@ jobs:
 
       - name: Smoke test the API image
         run: |
-          # SQLite, not the image's default PostgreSQL URL: there is no database
-          # service in this job and the point is to prove the image boots,
-          # migrates and answers /api/health.
+          # SQLite rather than the image's default PostgreSQL URL: there is no
+          # database service in this job and the point is to prove the image
+          # boots, migrates and answers /api/health. The file goes under
+          # STORAGE_DIR, the directory the image creates and hands to its
+          # unprivileged user; sqlite3 cannot create a missing parent directory.
           docker run -d --name api -p 8000:8000 \
             -e SECRET_KEY=ci-secret -e ADMIN_PASSWORD=ci-admin-password \
             -e ENVIRONMENT=production -e DEBUG=false \
-            -e "DATABASE_URL=sqlite+aiosqlite:///./storage/ci.db" \
+            -e "DATABASE_URL=sqlite+aiosqlite:////data/storage/ci.db" \
             talentmatch/api:ci
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8000/api/health; then
