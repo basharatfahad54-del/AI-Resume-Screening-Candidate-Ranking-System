@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "talentmatch-ml"
+version = "1.0.0"
+description = "Offline reranking, evaluation and fairness auditing for TalentMatch AI"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=2.0,<3",
+    "scipy>=1.13",
+    "scikit-learn>=1.4,<2",
+    "joblib>=1.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+# Neural embeddings instead of the deterministic hashed n-gram embedder.
+neural = ["sentence-transformers>=3.0"]
+
+[project.scripts]
+talentmatch-ml = "talentmatch_ml.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+# Explicit, so running pytest from inside ml/ does not warn about a future
+# default change.
+asyncio_default_fixture_loop_scope = "function"

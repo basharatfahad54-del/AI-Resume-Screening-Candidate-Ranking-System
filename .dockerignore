@@ -1,0 +1,45 @@
+# Keep the build context small and secrets out of the image layers.
+
+# Secrets and local state
+.env
+.env.*
+!.env.example
+**/.env.local
+**/storage/
+**/*.sqlite3
+**/*.db
+**/*.pem
+**/*.key
+
+# Version control and CI
+.git
+.gitignore
+.github
+
+# Frontend: installed inside the image, never from the host
+frontend/node_modules
+frontend/dist
+frontend/.vite
+frontend/coverage
+**/npm-debug.log*
+
+# Python: virtualenvs and caches
+.venv
+venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/*.egg-info
+
+# ML: generated corpora and run artefacts are reproducible from a seed, and the
+# offline pipeline is not a runtime dependency.
+ml
+ml/**
+
+# VCS and editor noise
+.idea
+.vscode
+.DS_Store
+Thumbs.db

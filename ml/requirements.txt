@@ -1,0 +1,18 @@
+# Offline ML pipeline only. The backend pins its own versions in ../requirements.txt;
+# this file is what `pip install -e ml` needs on a clean machine.
+numpy==2.2.1
+scipy==1.15.0
+scikit-learn==1.6.0
+joblib==1.6.0
+
+# Testing
+pytest==8.3.4
+
+# Build backend for `pip install -e ml --no-build-isolation`. pip cannot fetch
+# this into an isolated build env when you disable isolation, so it has to be
+# installed up front or the editable install fails with "invalid command
+# 'bdist_wheel'".
+wheel==0.48.0
+
+# Optional, not installed by default and not required by any test:
+# sentence-transformers==3.3.1   # neural embeddings instead of hashed n-grams

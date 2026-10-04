@@ -1,0 +1,57 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ---------- Node / Frontend ----------
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+
+# ---------- Environment / Secrets ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---------- Local data / uploads ----------
+# Uploaded resumes and the dev SQLite file, wherever the app was started from.
+storage/
+uploads/
+backend/storage/
+backend/uploads/
+frontend/.env.local
+frontend/.env.*.local
+*.sqlite3
+*.db
+ml/data/raw/
+ml/runs/
+# Generated corpora are reproducible from a seed: `cli synthesize`.
+ml/data/sample/
+ml/data/*.tmp/
+# Editable-install metadata from `pip install -e ml`.
+*.egg-info/
+ml/src/*.egg-info/
+
+# ---------- Editors / OS ----------
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

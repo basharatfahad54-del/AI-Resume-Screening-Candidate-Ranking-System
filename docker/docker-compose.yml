@@ -1,0 +1,91 @@
+# TalentMatch AI - local Docker stack
+#
+#   cp .env.example .env      # then set SECRET_KEY and ADMIN_PASSWORD
+#   docker compose -f docker/docker-compose.yml up --build
+#   open http://localhost:8080
+#
+# The compose file lives in docker/ because the build context must be the
+# repository root. Compose reads .env from the compose file's directory, hence
+# the explicit --env-file pointing back at the repository root.
+#
+# STATUS: not built in the authoring environment (no Docker daemon available),
+# so treat the first `docker compose build` as unverified.
+
+name: talentmatch
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ai_resume}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # Deterministic collation keeps ORDER BY stable across machines.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      # The API must not start before the database can actually accept writes.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ai_resume}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # Not published by default: only the API needs to reach it. Uncomment to
+    # inspect with psql from the host.
+    # ports:
+    #   - "5432:5432"
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DEBUG: ${DEBUG:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-ai_resume}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env - generate with python -c "import secrets;print(secrets.token_urlsafe(48))"}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env before the first run}
+      # Empty by default: with nginx proxying /api, requests are same-origin.
+      CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hashing}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-384}
+      LLM_PROVIDER: ${LLM_PROVIDER:-none}
+      STORAGE_DIR: /data/storage
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-10}
+      RETENTION_DAYS: ${RETENTION_DAYS:-365}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+    volumes:
+      # Uploaded resumes and SQLite files live here; the named volume keeps
+      # them across container rebuilds.
+      - api_storage:/data/storage
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+
+volumes:
+  db_data:
+  api_storage:

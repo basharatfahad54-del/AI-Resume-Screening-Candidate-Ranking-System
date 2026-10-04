@@ -1,0 +1,19 @@
+# Normalise line endings in the repository, not just in the working copy.
+# Without this, a Windows checkout can commit CRLF into shell scripts,
+# Dockerfile RUN lines and CI yaml, where a stray \r is a runtime failure.
+* text=auto eol=lf
+
+# Keep generated and vendored files byte-identical.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.woff binary
+*.woff2 binary
+package-lock.json -diff
+
+# The PRD render is a binary screenshot, not text.
+prd.png binary

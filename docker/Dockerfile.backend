@@ -1,0 +1,75 @@
+# TalentMatch API
+#
+# Multi-stage: wheels are built once with the compiler available, then copied
+# into a slim runtime image that has no build toolchain at all.
+#
+# Verified locally on Linux/macOS. It has NOT been built in this environment
+# (no Docker daemon), so treat `docker compose build` as the first real check.
+
+# ---------- Stage 1: build wheels ----------
+FROM python:3.12-slim AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Build tooling is needed here and only here.
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /wheels
+COPY requirements.txt .
+
+# The optional neural encoder is deliberately not installed: it would add
+# ~2GB of torch to the image. Set EMBEDDING_PROVIDER=openai, or accept the
+# deterministic hashed embedder.
+RUN pip wheel --wheel-dir /wheels -r requirements.txt
+
+# ---------- Stage 2: runtime ----------
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    ENVIRONMENT=production \
+    DEBUG=false \
+    STORAGE_DIR=/data/storage \
+    DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/ai_resume
+
+# libpq is the only runtime library the asyncpg driver needs; tini gives us
+# correct signal handling so SIGTERM reaches uvicorn and shutdown is clean.
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y libpq5 tini curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /wheels /wheels
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-index --find-links=/wheels -r /tmp/requirements.txt \
+    && rm -rf /wheels /tmp/requirements.txt
+
+# Run as an unprivileged user. /data is the volume mount for SQLite files and
+# uploaded resumes, so it must be writable by this uid.
+RUN useradd --create-home --uid 10001 talentmatch \
+    && mkdir -p /app /data/storage \
+    && chown -R talentmatch:talentmatch /app /data
+
+WORKDIR /app
+COPY --chown=talentmatch:talentmatch backend/ ./backend/
+# The offline ML pipeline (ml/) is intentionally not shipped: it is a training
+# and evaluation tool, not a runtime dependency. CI runs it from source.
+
+USER talentmatch
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8000/api/health || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+# Migrations run before the server starts. `alembic upgrade head` is idempotent,
+# so a scaled-out deployment can run it in every replica safely.
+CMD ["sh", "-c", "\
+    cd /app/backend && \
+    python -m alembic upgrade head && \
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]

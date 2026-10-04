@@ -1,0 +1,217 @@
+name: CI
+
+# One workflow, four independent jobs. Each one fails the build on its own
+# merits, so a frontend regression does not hide behind a backend timeout.
+
+# Quoted so generic YAML parsers do not read it as the boolean true.
+"on":
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+
+jobs:
+  backend:
+    name: API tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # The lockfile lives at the repository root; this job runs in backend/.
+          pip install -r ../requirements.txt
+
+      # The deterministic hashing embedder keeps this offline and reproducible:
+      # no model download, no network, same vectors on every runner.
+      - name: Unit and integration tests
+        env:
+          ENVIRONMENT: test
+          EMBEDDING_PROVIDER: hashing
+          DATABASE_URL: sqlite+aiosqlite:///./storage/test.db
+          SECRET_KEY: ci-secret-not-used-in-production
+        run: pytest tests -q
+
+      - name: Byte-compile check
+        run: python -m compileall -q app tests
+
+      - name: OpenAPI schema is valid
+        run: |
+          python - <<'PY'
+          from app.main import app
+
+          schema = app.openapi()
+          paths = schema["paths"]
+          assert len(paths) > 30, f"unexpectedly few documented paths: {len(paths)}"
+          operations = sum(
+              1
+              for methods in paths.values()
+              for method in methods
+              if method.lower() in {"get", "post", "put", "patch", "delete"}
+          )
+          print(f"{len(paths)} paths / {operations} operations documented")
+          PY
+
+  ml:
+    name: ML pipeline tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r ml/requirements.txt
+
+      - name: Run pipeline tests
+        env:
+          PYTHONPATH: ml/src
+        run: python -m pytest ml -q
+
+      # Proves the corpus, features, cross-validation and report all still work
+      # end to end, and keeps the published metrics honest.
+      - name: End-to-end run (small corpus, for speed)
+        env:
+          PYTHONPATH: ml/src
+        run: |
+          python -m talentmatch_ml.cli all \
+            --jobs 12 --candidates 40 --folds 3 --model logistic \
+            --runs ml/runs/ci
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-report
+          path: ml/runs/ci/**/report.md
+          if-no-files-found: warn
+
+  frontend:
+    name: Web tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Dependency audit (production dependencies)
+        # --omit=dev on purpose: the outstanding advisories are in the Tailwind
+        # build toolchain, which never ships to a browser. Production
+        # dependencies must be clean; the dev-tooling debt is tracked in
+        # docs/security.md instead of being waved through with a warning.
+        run: npm audit --audit-level=high --omit=dev
+
+  docker:
+    name: Container images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.backend
+          push: false
+          load: true
+          tags: talentmatch/api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.frontend
+          push: false
+          load: true
+          tags: talentmatch/web:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test the API image
+        run: |
+          # SQLite, not the image's default PostgreSQL URL: there is no database
+          # service in this job and the point is to prove the image boots,
+          # migrates and answers /api/health.
+          docker run -d --name api -p 8000:8000 \
+            -e SECRET_KEY=ci-secret -e ADMIN_PASSWORD=ci-admin-password \
+            -e ENVIRONMENT=production -e DEBUG=false \
+            -e "DATABASE_URL=sqlite+aiosqlite:///./storage/ci.db" \
+            talentmatch/api:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/api/health; then
+              echo "API is healthy"
+              docker exec api id
+              docker logs api | tail -20
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API never became healthy"
+          docker logs api
+          exit 1
+        always: true
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f api || true
