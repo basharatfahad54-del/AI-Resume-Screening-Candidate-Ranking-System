@@ -210,7 +210,6 @@ jobs:
           echo "API never became healthy"
           docker logs api
           exit 1
-        always: true
 
       - name: Clean up
         if: always()
